@@ -310,6 +310,7 @@ async def on_ready():
         peak_end_hour=config.get("peak_end_hour", 17),
         state_path=config.get("state_path", "state.json"),
         github_token=GITHUB_TOKEN,
+        max_concurrency=config.get("max_concurrency", 8),
     )
     _alerter_task = asyncio.create_task(alerter.run())
     _alerter_task.add_done_callback(_on_alerter_task_done)

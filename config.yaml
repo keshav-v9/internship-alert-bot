@@ -10,6 +10,7 @@ poll_interval_seconds: 300
 # off_peak_poll_interval_seconds: 3600  # disabled: poll every 5 min around the clock
 peak_start_hour: 6   # local system time of the machine running the bot
 peak_end_hour: 17    # exclusive — 17 means "up to but not including 5pm"
+max_concurrency: 8
 state_path: state.json
 
 sources:

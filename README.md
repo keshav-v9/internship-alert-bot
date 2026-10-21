@@ -40,6 +40,7 @@ Global settings:
 | `off_peak_poll_interval_seconds` | Optional slower interval outside peak hours. |
 | `peak_start_hour` / `peak_end_hour` | Peak window in the machine's local time (end hour is exclusive). |
 | `state_path` | Where seen listings are stored. |
+| `max_concurrency` | Sources fetched at once (default 8). |
 
 Each entry under `sources:` has a `type`, a `name` (shown in alerts), a `url`, an optional `board_url` (makes the alert title a link) and optional `enabled: false` to skip it.
 
@@ -54,11 +55,33 @@ Each entry under `sources:` has a `type`, a `name` (shown in alerts), a `url`, a
 
 To watch a new company, copy an existing entry of the right type, change `name`, `url` and `board_url`, and restart the bot.
 
+## Performance
+
+Measured with `python bench.py 3` (31 sources, one machine, home network, same sources before and after; cycle 1 seeds state, so figures are the warm cycles):
+
+| Metric | Before | After |
+|---|---|---|
+| Poll cycle wall time | 57.8 s | 13.7 s (4.2x faster) |
+| JSON/HTML payload parsed per warm cycle | 36.1 MB | 10.2 MB (-72%) |
+| Effective poll period (5-min setting) | 300 s + cycle = ~358 s | 300 s (fixed-rate) |
+| Worst-case posting-to-alert delay | ~358 s | ~300 s; a 60 s interval now fits inside the cycle budget |
+| State file writes per unchanged cycle | one per source | 0 (written only on change, atomically) |
+
+What changed:
+- Sources are polled concurrently (`max_concurrency`, default 8) instead of one after another, so a cycle takes about as long as its slowest source.
+- ETag-capable feeds (Ashby, Lever, Greenhouse) use conditional requests; a `304` skips the download and the re-parse.
+- Fixed-rate scheduling: the interval is measured start-to-start instead of sleeping the full interval after each cycle.
+- Bloomberg's paginated search fetches pages in windows (its server serializes requests, so it remains the slowest source).
+- `state.json` is written atomically (temp file + rename) and only when a source changed.
+
+Run `pip install -r requirements-dev.txt && pytest` for the tests. Peak memory (about 200 MB) is unchanged.
+
 ## Files
 
 - `bot.py`: Discord (and email) delivery.
 - `alerter.py`: polling and diffing, with no Discord awareness.
 - `config.yaml`: which sources to watch.
+- `bench.py`: benchmark harness. `tests/`: pytest suite.
 - `.env`: your secrets (git-ignored). `state.json`: seen listings (git-ignored).
 
 ## Notes

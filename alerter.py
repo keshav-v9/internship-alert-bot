@@ -6,8 +6,10 @@ import base64
 import datetime
 import json
 import logging
+import os
 import re
 import ssl
+import time
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -829,6 +831,7 @@ class Alerter:
         peak_end_hour: int = 17,
         state_path: str = "state.json",
         github_token: str | None = None,
+        max_concurrency: int = 8,
     ):
         """
         Args:
@@ -873,6 +876,13 @@ class Alerter:
         self.peak_end_hour = peak_end_hour
         self.state_path = Path(state_path)
         self.github_token = github_token
+        # Max sources fetched at once in a poll cycle. A cycle takes roughly
+        # as long as its slowest source instead of the sum of all of them.
+        self.max_concurrency = max(1, max_concurrency)
+        # url -> ETag from the last 200 response, for conditional GETs.
+        # In-memory only: the first poll after a restart is always a full
+        # fetch, later ones send If-None-Match and usually get a 304.
+        self._etags: dict[str, str] = {}
         # self.state maps source name -> the full list of lines seen for
         # that source as of the last successful poll. This is the "memory"
         # that makes diffing possible across restarts.
@@ -891,7 +901,11 @@ class Alerter:
         Called after every single source check (not just at the end of a
         full poll cycle) so a crash partway through a cycle doesn't lose
         progress on the sources already checked."""
-        self.state_path.write_text(json.dumps(self.state, indent=2))
+        # Write to a temp file then rename, so a crash mid-write can never
+        # leave a truncated state.json (os.replace is atomic on POSIX).
+        tmp = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(self.state, separators=(",", ":")))
+        os.replace(tmp, self.state_path)
 
     async def _fetch_github_repo_lines(
         self, session: aiohttp.ClientSession, source: dict
@@ -1109,14 +1123,28 @@ class Alerter:
         base_url = source["url"]
         sep = "&" if "?" in base_url else "?"
         lines: list[str] = []
-        for offset in range(0, source.get("max_results", 200), 12):
+
+        async def fetch_page(offset: int) -> str:
             url = base_url if offset == 0 else f"{base_url}{sep}jobOffset={offset}"
             async with session.get(url) as resp:
                 resp.raise_for_status()
-                html = await resp.text()
-            if "article--result" not in html:
+                return await resp.text()
+
+        # Pages are independent, so fetch a window of them at once instead of
+        # one at a time; stop after the first window that contains an empty
+        # page (pages come back in order, so everything after it is empty too).
+        offsets = list(range(0, source.get("max_results", 200), 12))
+        window = 6
+        for i in range(0, len(offsets), window):
+            pages = await asyncio.gather(*(fetch_page(o) for o in offsets[i : i + window]))
+            done = False
+            for html in pages:
+                if "article--result" not in html:
+                    done = True
+                    break
+                lines.extend(_extract_bloomberg_jobs(html, company))
+            if done:
                 break
-            lines.extend(_extract_bloomberg_jobs(html, company))
         return lines
 
     async def _fetch_wp_job_manager_lines(self, session: aiohttp.ClientSession, source: dict) -> list[str]:
@@ -1313,6 +1341,25 @@ class Alerter:
         finally:
             await page.close()
 
+    async def _get_json_conditional(
+        self, session: aiohttp.ClientSession, url: str, name: str
+    ):
+        """GET `url` as JSON, sending If-None-Match when we hold an ETag from
+        a previous 200 and still have that source's last result in state.
+        Returns the parsed JSON, or None on 304 Not Modified (the caller then
+        reuses the stored lines — nothing downloaded, nothing to re-parse)."""
+        headers = {}
+        etag = self._etags.get(url)
+        if etag and name in self.state:
+            headers["If-None-Match"] = etag
+        async with session.get(url, headers=headers) as resp:
+            if resp.status == 304:
+                return None
+            resp.raise_for_status()
+            if resp.headers.get("ETag"):
+                self._etags[url] = resp.headers["ETag"]
+            return await resp.json(content_type=None)
+
     async def _fetch_ats_lines(self, session: aiohttp.ClientSession, source: dict) -> list[str]:
         """Dispatch to the right fetch/extraction logic for a structured
         job-board API source (greenhouse / lever / ashby / workday /
@@ -1344,9 +1391,9 @@ class Alerter:
         if source_type == "workday":
             return await self._fetch_workday_lines(session, source)
 
-        async with session.get(url) as resp:
-            resp.raise_for_status()
-            data = await resp.json(content_type=None)
+        data = await self._get_json_conditional(session, url, company)
+        if data is None:
+            return self.state[company]
 
         if source_type == "greenhouse":
             return _extract_greenhouse(data, company)
@@ -1450,8 +1497,9 @@ class Alerter:
                 logger.info("%r changed: %d new line(s)", name, len(new_lines))
                 await self.on_update(name, new_lines)
 
-        self.state[name] = current_lines
-        self._save_state()
+        if previous_lines != current_lines:
+            self.state[name] = current_lines
+            self._save_state()
 
     async def poll_once(self) -> None:
         """Check every configured source exactly once, in order, using one
@@ -1537,14 +1585,22 @@ class Alerter:
             async with aiohttp.ClientSession(
                 connector=connector, headers=headers, timeout=timeout
             ) as session:
+                sem = asyncio.Semaphore(self.max_concurrency)
+
+                async def check(source: dict) -> None:
+                    async with sem:
+                        try:
+                            await self._check_source(session, source, browser)
+                        except Exception:
+                            logger.exception("error checking source %r", source.get("name"))
+
+                enabled = []
                 for source in self.sources:
-                    if not source.get("enabled", True):
+                    if source.get("enabled", True):
+                        enabled.append(source)
+                    else:
                         logger.debug("skipping disabled source %r", source.get("name"))
-                        continue
-                    try:
-                        await self._check_source(session, source, browser)
-                    except Exception:
-                        logger.exception("error checking source %r", source.get("name"))
+                await asyncio.gather(*(check(source) for source in enabled))
         finally:
             if browser is not None:
                 await browser.close()
@@ -1612,7 +1668,13 @@ class Alerter:
         to Discord — see bot.py's on_ready handler.
         """
         while True:
+            started = time.monotonic()
             await self.poll_once()
-            sleep_for = self._next_sleep_seconds()
-            logger.debug("sleeping %.0fs until next poll", sleep_for)
+            elapsed = time.monotonic() - started
+            # Fixed-rate scheduling: the interval is measured start-to-start,
+            # so a slow cycle doesn't stretch the period (sleeping the full
+            # interval *after* each cycle made the real period interval +
+            # cycle time, i.e. worst-case alert latency grew with it).
+            sleep_for = max(0.0, self._next_sleep_seconds() - elapsed)
+            logger.info("poll cycle took %.1fs; sleeping %.0fs", elapsed, sleep_for)
             await asyncio.sleep(sleep_for)
