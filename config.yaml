@@ -26,6 +26,9 @@ sources:
     owner: jobright-ai
     repo: 2026-Software-Engineer-Internship
     board_url: "https://github.com/jobright-ai/2026-Software-Engineer-Internship"
+    # Jobright's "Date Posted" column is unreliable, so each new listing's own
+    # page is checked and only postings published within this many hours alert.
+    max_age_hours: 24
 
   - type: google_jobs
     name: "Google"

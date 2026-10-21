@@ -163,3 +163,41 @@ def test_one_failing_source_does_not_stop_the_others(tmp_path):
 
     asyncio.run(run())
     assert done == ["good"]
+
+
+def test_stale_postings_are_dropped_and_unknown_ages_kept(tmp_path, monkeypatch):
+    import datetime
+    import re
+
+    import alerter as alerter_mod
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    fmt = "%Y-%m-%d %H:%M:%S"
+    pages = {
+        "fresh": f'{{"publishTime":"{(now - datetime.timedelta(hours=2)).strftime(fmt)}"}}',
+        "old": f'{{"publishTime":"{(now - datetime.timedelta(hours=500)).strftime(fmt)}"}}',
+        "nodate": "<html>security check</html>",
+    }
+
+    async def handler(request):
+        return web.Response(text=pages[request.match_info["job"]])
+
+    monkeypatch.setattr(alerter_mod, "_JOBRIGHT_URL_RE", re.compile(r"http://127\.0\.0\.1:\d+/job/\w+"))
+
+    async def run():
+        app = web.Application()
+        app.router.add_get("/job/{job}", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        base = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/job"
+        a = make_alerter(tmp_path, [])
+        lines = [f"| {n} | {base}/{n} |" for n in ("fresh", "old", "nodate")] + ["no link here"]
+        async with aiohttp.ClientSession() as s:
+            kept = await a._drop_stale(s, lines, 24)
+        await runner.cleanup()
+        return [l.split("|")[1].strip() if "|" in l else l for l in kept]
+
+    # fresh kept; old dropped; undeterminable (no date / no link) kept so nothing real is hidden
+    assert asyncio.run(run()) == ["fresh", "nodate", "no link here"]

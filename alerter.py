@@ -196,6 +196,9 @@ _NON_US_LOCATION_MARKERS = _NON_US_COUNTRIES | _NON_US_CITIES
 # excluding a genuinely-US posting. \b works fine for the multi-word
 # entries too (e.g. "united kingdom", "ho chi minh") since \b anchors on
 # the whole phrase's start/end, not each word individually.
+_JOBRIGHT_URL_RE = re.compile(r"https://jobright\.ai/jobs/info/[0-9a-f]+")
+_PUBLISH_TIME_RE = re.compile(r'"publishTime":"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"')
+
 _NON_US_LOCATION_RE = re.compile(
     r"\b(" + "|".join(re.escape(m) for m in _NON_US_LOCATION_MARKERS) + r")\b",
     re.IGNORECASE,
@@ -883,6 +886,8 @@ class Alerter:
         # In-memory only: the first poll after a restart is always a full
         # fetch, later ones send If-None-Match and usually get a 304.
         self._etags: dict[str, str] = {}
+        # job page url -> published datetime (UTC), so each page is fetched once.
+        self._posted_cache: dict[str, datetime.datetime] = {}
         # self.state maps source name -> the full list of lines seen for
         # that source as of the last successful poll. This is the "memory"
         # that makes diffing possible across restarts.
@@ -1341,6 +1346,59 @@ class Alerter:
         finally:
             await page.close()
 
+    async def _line_age_hours(
+        self, session: aiohttp.ClientSession, line: str
+    ) -> float | None:
+        """Hours since the Jobright posting linked in `line` was published, read
+        from the job page's own `publishTime` (UTC). Jobright's README "Date
+        Posted" column is unreliable — it shows today's date for jobs whose
+        page says they were published weeks ago. Returns None if the line has
+        no Jobright link or the page can't be read/parsed (caller keeps it)."""
+        match = _JOBRIGHT_URL_RE.search(line)
+        if not match:
+            return None
+        url = match.group(0)
+        posted = self._posted_cache.get(url)
+        if posted is None:
+            # Jobright throttles bursts (it answers with a redirect to a
+            # security check), so retry once after a short pause.
+            for attempt in range(2):
+                try:
+                    async with session.get(url) as resp:
+                        html = await resp.text()
+                except Exception:
+                    html = ""
+                published = _PUBLISH_TIME_RE.search(html)
+                if published:
+                    posted = datetime.datetime.strptime(
+                        published.group(1), "%Y-%m-%d %H:%M:%S"
+                    ).replace(tzinfo=datetime.timezone.utc)
+                    self._posted_cache[url] = posted
+                    break
+                if attempt == 0:
+                    await asyncio.sleep(2)
+            else:
+                logger.warning("could not read posting date for %s", url)
+                return None
+        return (datetime.datetime.now(datetime.timezone.utc) - posted).total_seconds() / 3600
+
+    async def _drop_stale(
+        self, session: aiohttp.ClientSession, lines: list[str], max_age_hours: float
+    ) -> list[str]:
+        """Keep only lines posted within `max_age_hours`. Lines whose age can't
+        be determined are kept, so a parsing failure never hides a real alert."""
+        sem = asyncio.Semaphore(2)
+
+        async def age(line: str) -> float | None:
+            async with sem:
+                return await self._line_age_hours(session, line)
+
+        ages = await asyncio.gather(*(age(line) for line in lines))
+        fresh = [l for l, a in zip(lines, ages) if a is None or a <= max_age_hours]
+        if len(fresh) != len(lines):
+            logger.info("dropped %d stale posting(s) older than %sh", len(lines) - len(fresh), max_age_hours)
+        return fresh
+
     async def _get_json_conditional(
         self, session: aiohttp.ClientSession, url: str, name: str
     ):
@@ -1493,6 +1551,8 @@ class Alerter:
             # rather than an O(n) scan of previous_lines per line.
             previous_set = set(previous_lines)
             new_lines = [line for line in current_lines if line not in previous_set]
+            if new_lines and source.get("max_age_hours"):
+                new_lines = await self._drop_stale(session, new_lines, source["max_age_hours"])
             if new_lines:
                 logger.info("%r changed: %d new line(s)", name, len(new_lines))
                 await self.on_update(name, new_lines)

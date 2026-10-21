@@ -53,6 +53,8 @@ Each entry under `sources:` has a `type`, a `name` (shown in alerts), a `url`, a
 | `wp_job_manager` | WordPress "WP Job Manager" boards | |
 | `webpage` | Any server-rendered page; alerts when its text changes | `selector` (CSS, optional) |
 
+`github_repo` sources also accept `max_age_hours`: for Jobright-style lists, each new row's own page is checked and only postings published within that many hours alert (the list's own date column is not reliable).
+
 To watch a new company, copy an existing entry of the right type, change `name`, `url` and `board_url`, and restart the bot.
 
 ## Performance
