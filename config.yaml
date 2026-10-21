@@ -155,12 +155,12 @@ sources:
     board_url: "https://cmegroup.wd1.myworkdayjobs.com/cme_careers"
 
   # --- Plain server-rendered career pages (HTML text diff) ---
-  - type: webpage
+  - type: apple_jobs
     name: "Apple"
     url: "https://jobs.apple.com/en-us/search?team=internships-STDNT-INTRN"
     board_url: "https://jobs.apple.com/en-us/search?team=internships-STDNT-INTRN"
 
-  - type: webpage
+  - type: radancy_jobs
     name: "Capital One"
     url: "https://www.capitalonecareers.com/all-internship-jobs"
     board_url: "https://www.capitalonecareers.com/all-internship-jobs"

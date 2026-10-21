@@ -8,10 +8,13 @@ import json
 import logging
 import os
 import re
+import math
 import ssl
 import time
 from pathlib import Path
 from typing import Awaitable, Callable
+
+from urllib.parse import urljoin
 
 import aiohttp
 import certifi
@@ -679,6 +682,98 @@ _COMPANY_COLUMN_NAMES = {"company"}
 _CONTINUATION_MARKERS = {"↳", "└", "->", "→"}
 
 
+# Apple's search page ships its results as escaped JSON inside the HTML; each
+# posting object has these fields in this order.
+_APPLE_JOB_RE = re.compile(
+    r'"locations":(\[[^\]]*\]),"positionId":"(\d+)","postingDate":"[^"]*",'
+    r'"postingTitle":"((?:[^"\\]|\\.)*)".*?"transformedPostingTitle":"([^"]*)"',
+    re.S,
+)
+
+
+def _extract_apple_jobs(html: str, company: str) -> tuple[list[str], int]:
+    """Parse one page of jobs.apple.com search results into formatted lines,
+    keeping only US internship/co-op postings. Returns (lines, postings seen on
+    the page) — the count lets the caller stop paginating on an empty page."""
+    text = html.replace('\\"', '"')
+    lines: list[str] = []
+    total = 0
+    for locations, position_id, raw_title, slug in _APPLE_JOB_RE.findall(text):
+        total += 1
+        try:
+            title = json.loads(f'"{raw_title}"')
+            locs = json.loads(locations)
+        except ValueError:
+            continue
+        if not _is_internship_title(title):
+            continue
+        if not any(
+            str(loc.get("countryID", "")).endswith("USA")
+            or str(loc.get("countryName", "")).startswith("United States")
+            for loc in locs
+        ):
+            continue
+        url = f"https://jobs.apple.com/en-us/details/{position_id}/{slug}"
+        lines.append(_format_role(company, title, url))
+    return lines, total
+
+
+def _extract_radancy_jobs(html: str, company: str, base_url: str) -> tuple[list[str], int]:
+    """Parse a Radancy/TalentBrew-style results list (e.g. capitalonecareers.com):
+    `#search-results-list` holds `<a href="/job/...">` rows with an `<h2>` title
+    and a `.job-location` span. Keeps only US internship/co-op postings and
+    returns (lines, postings seen on the page)."""
+    soup = BeautifulSoup(html, "html.parser")
+    lines: list[str] = []
+    anchors = soup.select('#search-results-list a[href*="/job/"]')
+    for a in anchors:
+        title_el = a.select_one("h2, h3")
+        title = (title_el or a).get_text(" ", strip=True)
+        loc_el = a.select_one(".job-location")
+        location = loc_el.get_text(" ", strip=True) if loc_el else ""
+        if not _is_internship_title(title) or not _is_us_location(location):
+            continue
+        lines.append(_format_role(company, title, urljoin(base_url, a["href"])))
+    return lines, len(anchors)
+
+
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def _extract_markdown_table_rows(content: str) -> list[str] | None:
+    """Parse a GitHub-flavored Markdown pipe table (as used by Jobright's
+    internship lists) into its data rows, keeping only US internship/co-op
+    postings. Rows are returned as the raw table lines, unchanged, so state
+    already stored for a source stays comparable.
+
+    The title and location columns are found from the header row (a cell named
+    "Job Title"/"Role"/"Position" and one named "Location"). Returns None when
+    no such table exists so the caller can fall back to plain lines."""
+    title_idx = loc_idx = None
+    rows: list[str] = []
+    for line in content.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        lowered = [c.lower() for c in cells]
+        if title_idx is None:
+            for i, c in enumerate(lowered):
+                if c in ("job title", "role", "position", "title"):
+                    title_idx = i
+                elif c == "location":
+                    loc_idx = i
+            continue  # the header line itself (or a line before it)
+        if set("".join(cells)) <= set("-: "):
+            continue  # the |---|---| separator row
+        if title_idx >= len(cells):
+            continue
+        title = _MD_LINK_RE.sub(r"\1", cells[title_idx]).replace("*", "").strip()
+        location = cells[loc_idx] if loc_idx is not None and loc_idx < len(cells) else ""
+        if _is_internship_title(title) and _is_us_location(location):
+            rows.append(line)
+    return rows if title_idx is not None else None
+
+
 def _extract_table_rows(html_content: str) -> list[str] | None:
     """Parse HTML <table> markup embedded in a GitHub repo README (common in
     SimplifyJobs-style internship lists, which use a raw <table><tr><td>
@@ -940,7 +1035,49 @@ class Alerter:
         table_rows = _extract_table_rows(content)
         if table_rows is not None:
             return table_rows
+        md_rows = _extract_markdown_table_rows(content)
+        if md_rows is not None:
+            return md_rows
         return content.splitlines()
+
+    async def _fetch_apple_jobs_lines(self, session: aiohttp.ClientSession, source: dict) -> list[str]:
+        """Apple's search shows 20 postings per page (`&page=N`); page until one
+        comes back empty or `max_results` is reached."""
+        base = source["url"]
+        sep = "&" if "?" in base else "?"
+        lines: list[str] = []
+        for page in range(1, math.ceil(source.get("max_results", 400) / 20) + 1):
+            url = base if page == 1 else f"{base}{sep}page={page}"
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                html = await resp.text()
+            page_lines, seen = _extract_apple_jobs(html, source["name"])
+            if seen == 0:
+                break
+            lines.extend(l for l in page_lines if l not in lines)
+        return lines
+
+    async def _fetch_radancy_jobs_lines(self, session: aiohttp.ClientSession, source: dict) -> list[str]:
+        """Fetch a Radancy/TalentBrew results list, following `data-total-pages`
+        (`?p=N`) for up to 5 pages."""
+        lines: list[str] = []
+        async with session.get(source["url"]) as resp:
+            resp.raise_for_status()
+            html = await resp.text()
+            final_url = resp.url
+        pages = re.search(r'data-total-pages="(\d+)"', html)
+        total_pages = min(int(pages.group(1)) if pages else 1, 5)
+        page = 1
+        while True:
+            page_lines, _ = _extract_radancy_jobs(html, source["name"], str(final_url))
+            lines.extend(l for l in page_lines if l not in lines)
+            page += 1
+            if page > total_pages:
+                break
+            async with session.get(final_url.update_query(p=page)) as resp:
+                resp.raise_for_status()
+                html = await resp.text()
+        return lines
 
     async def _fetch_webpage_lines(
         self, session: aiohttp.ClientSession, source: dict
@@ -1514,6 +1651,10 @@ class Alerter:
             current_lines = await self._fetch_github_repo_lines(session, source)
         elif source_type == "webpage":
             current_lines = await self._fetch_webpage_lines(session, source)
+        elif source_type == "apple_jobs":
+            current_lines = await self._fetch_apple_jobs_lines(session, source)
+        elif source_type == "radancy_jobs":
+            current_lines = await self._fetch_radancy_jobs_lines(session, source)
         elif source_type in ("greenhouse", "lever", "ashby", "workday", "amazon_jobs"):
             current_lines = await self._fetch_ats_lines(session, source)
         elif source_type == "wp_job_manager":

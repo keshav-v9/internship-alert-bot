@@ -201,3 +201,63 @@ def test_stale_postings_are_dropped_and_unknown_ages_kept(tmp_path, monkeypatch)
 
     # fresh kept; old dropped; undeterminable (no date / no link) kept so nothing real is hidden
     assert asyncio.run(run()) == ["fresh", "nodate", "no link here"]
+
+
+def test_markdown_table_keeps_only_us_internships():
+    from alerter import _extract_markdown_table_rows
+
+    md = """
+Some intro text
+| Company | Job Title | Location | Work Model | Date Posted |
+| ----- | --------- |  --------- | ---- | ------- |
+| **[Uber](https://u.com)** | **[2027 Software Engineering Intern, US](https://jobright.ai/jobs/info/aa)** | San Francisco, CA, United States | On Site | Oct 20 |
+| ↳ | **[Backend Co-op](https://jobright.ai/jobs/info/bb)** | Remote | Remote | Oct 20 |
+| **[Acme](https://a.com)** | **[Senior Software Engineer](https://jobright.ai/jobs/info/cc)** | Austin, TX, United States | On Site | Oct 20 |
+| **[Foo](https://f.com)** | **[Software Engineering Intern](https://jobright.ai/jobs/info/dd)** | London, United Kingdom | On Site | Oct 20 |
+| **[Bar](https://b.com)** | **[Internal Tools Engineer](https://jobright.ai/jobs/info/ee)** | Seattle, WA, United States | On Site | Oct 20 |
+"""
+    rows = _extract_markdown_table_rows(md)
+    assert [r.split("|")[2].strip() for r in rows] == [
+        "**[2027 Software Engineering Intern, US](https://jobright.ai/jobs/info/aa)**",
+        "**[Backend Co-op](https://jobright.ai/jobs/info/bb)**",
+    ]
+    assert _extract_markdown_table_rows("no table here") is None
+
+
+def _apple_obj(pid, title, country_id, country):
+    loc = f'[{{"countryName":"{country}","countryID":"{country_id}","name":"X"}}]'
+    return (
+        f'\\"locations\\":{loc.replace(chr(34), chr(92) + chr(34))},\\"positionId\\":\\"{pid}\\",'
+        f'\\"postingDate\\":\\"Oct 21, 2026\\",\\"postingTitle\\":\\"{title}\\",'
+        f'\\"localeInfo\\":{{\\"a\\":1}},\\"postDateInGMT\\":\\"2026-10-21T09:30:18Z\\",'
+        f'\\"transformedPostingTitle\\":\\"slug-{pid}\\"'
+    )
+
+
+def test_apple_extractor_keeps_only_us_internships():
+    from alerter import _extract_apple_jobs
+
+    html = "<script>" + " ".join(
+        _apple_obj(*a)
+        for a in [
+            (1, "Software Internship", "iso-country-USA", "United States"),
+            (2, "Software Internship", "iso-country-GBR", "United Kingdom"),
+            (3, "Senior Engineer", "iso-country-USA", "United States"),
+        ]
+    ) + "</script>"
+    lines, seen = _extract_apple_jobs(html, "Apple")
+    assert seen == 3
+    assert lines == ["**Apple** — Software Internship — [Apply](https://jobs.apple.com/en-us/details/1/slug-1)"]
+
+
+def test_radancy_extractor_keeps_only_us_internships():
+    from alerter import _extract_radancy_jobs
+
+    html = """<section id="search-results-list"><ul>
+    <li><a href="/job/a/1"><h2>Data Intern</h2><span class="job-location">McLean, VA</span></a></li>
+    <li><a href="/job/b/2"><h2>Data Intern</h2><span class="job-location">London, United Kingdom</span></a></li>
+    <li><a href="/job/c/3"><h2>Director</h2><span class="job-location">McLean, VA</span></a></li>
+    </ul></section>"""
+    lines, seen = _extract_radancy_jobs(html, "Capital One", "https://x.com/search")
+    assert seen == 3
+    assert lines == ["**Capital One** — Data Intern — [Apply](https://x.com/job/a/1)"]
