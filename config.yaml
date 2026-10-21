@@ -1,0 +1,198 @@
+poll_interval_seconds: 300
+# Slower polling outside weekday business hours — most new internship
+# postings land during the day, so there's little to gain (and real
+# CPU/network/battery cost, especially from the browser-based sources) in
+# polling every 5 minutes at 2am or on a Sunday. See _next_sleep_seconds's
+# docstring in alerter.py for exactly how this schedule is computed —
+# notably, it's built so a poll never lags into peak hours: if peak time
+# is due to start sooner than this interval would otherwise wake up, it
+# wakes up right at that moment instead.
+# off_peak_poll_interval_seconds: 3600  # disabled: poll every 5 min around the clock
+peak_start_hour: 6   # local system time of the machine running the bot
+peak_end_hour: 17    # exclusive — 17 means "up to but not including 5pm"
+state_path: state.json
+
+sources:
+  - type: github_repo
+    name: "SimplifyJobs Summer2027"
+    owner: SimplifyJobs
+    repo: Summer2027-Internships
+    board_url: "https://github.com/SimplifyJobs/Summer2027-Internships"
+    enabled: false
+
+  - type: github_repo
+    name: "Jobright SWE Internships"
+    owner: jobright-ai
+    repo: 2026-Software-Engineer-Internship
+    board_url: "https://github.com/jobright-ai/2026-Software-Engineer-Internship"
+
+  - type: google_jobs
+    name: "Google"
+    url: "https://www.google.com/about/careers/applications/jobs/results?employment_type=INTERN"
+    board_url: "https://www.google.com/about/careers/applications/jobs/results?employment_type=INTERN"
+
+  - type: linkedin_jobs
+    name: "LinkedIn"
+    url: "https://www.linkedin.com/jobs/search/?keywords=intern&f_C=1337"
+    board_url: "https://www.linkedin.com/jobs/search/?keywords=intern&f_C=1337"
+
+  - type: bloomberg_jobs
+    name: "Bloomberg"
+    url: "https://bloomberg.avature.net/careers/SearchJobs?query=intern"
+    board_url: "https://bloomberg.avature.net/careers/SearchJobs?query=intern"
+
+  # --- ATS-backed company career pages (clean JSON APIs) ---
+  - type: amazon_jobs
+    name: "Amazon"
+    url: "https://www.amazon.jobs/en/search.json?base_query=intern&normalized_country_code[]=USA"
+    max_results: 200
+    board_url: "https://www.amazon.jobs/en/search?base_query=intern"
+
+  - type: amazon_jobs
+    name: "AWS"
+    url: "https://www.amazon.jobs/en/search.json?base_query=intern&business_category[]=aws"
+    max_results: 50
+    board_url: "https://www.amazon.jobs/en/search?base_query=intern&business_category[]=aws"
+
+  - type: greenhouse
+    name: "Databricks"
+    url: "https://boards-api.greenhouse.io/v1/boards/databricks/jobs"
+    board_url: "https://boards.greenhouse.io/databricks"
+
+  - type: greenhouse
+    name: "Stripe"
+    url: "https://boards-api.greenhouse.io/v1/boards/stripe/jobs"
+    board_url: "https://boards.greenhouse.io/stripe"
+
+  - type: lever
+    name: "Palantir"
+    url: "https://api.lever.co/v0/postings/palantir?mode=json"
+    board_url: "https://jobs.lever.co/palantir"
+
+  - type: ashby
+    name: "OpenAI"
+    url: "https://api.ashbyhq.com/posting-api/job-board/openai"
+    board_url: "https://jobs.ashbyhq.com/openai"
+
+  - type: greenhouse
+    name: "Roblox"
+    url: "https://boards-api.greenhouse.io/v1/boards/roblox/jobs"
+    board_url: "https://boards.greenhouse.io/roblox"
+
+  - type: greenhouse
+    name: "Cloudflare"
+    url: "https://boards-api.greenhouse.io/v1/boards/cloudflare/jobs"
+    board_url: "https://boards.greenhouse.io/cloudflare"
+
+  - type: greenhouse
+    name: "MongoDB"
+    url: "https://boards-api.greenhouse.io/v1/boards/mongodb/jobs"
+    board_url: "https://boards.greenhouse.io/mongodb"
+
+  - type: greenhouse
+    name: "Cockroach Labs"
+    url: "https://boards-api.greenhouse.io/v1/boards/cockroachlabs/jobs"
+    board_url: "https://boards.greenhouse.io/cockroachlabs"
+
+  - type: ashby
+    name: "Confluent"
+    url: "https://api.ashbyhq.com/posting-api/job-board/confluent"
+    board_url: "https://jobs.ashbyhq.com/confluent"
+
+  - type: greenhouse
+    name: "Datadog"
+    url: "https://boards-api.greenhouse.io/v1/boards/datadog/jobs"
+    board_url: "https://boards.greenhouse.io/datadog"
+
+  - type: greenhouse
+    name: "Coinbase"
+    url: "https://boards-api.greenhouse.io/v1/boards/coinbase/jobs"
+    board_url: "https://boards.greenhouse.io/coinbase"
+
+  - type: greenhouse
+    name: "Robinhood"
+    url: "https://boards-api.greenhouse.io/v1/boards/robinhood/jobs"
+    board_url: "https://boards.greenhouse.io/robinhood"
+
+  - type: greenhouse
+    name: "SpaceX"
+    url: "https://boards-api.greenhouse.io/v1/boards/spacex/jobs"
+    board_url: "https://boards.greenhouse.io/spacex"
+
+  - type: workday
+    name: "NVIDIA"
+    url: "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs"
+    search_text: "intern"
+    max_results: 200
+    board_url: "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite"
+
+  - type: workday
+    name: "Adobe"
+    url: "https://adobe.wd5.myworkdayjobs.com/wday/cxs/adobe/external_experienced/jobs"
+    search_text: "intern"
+    board_url: "https://adobe.wd5.myworkdayjobs.com/external_experienced"
+
+  - type: workday
+    name: "Visa"
+    url: "https://visa.wd5.myworkdayjobs.com/wday/cxs/visa/Visa_Early_Careers/jobs"
+    search_text: "intern"
+    board_url: "https://visa.wd5.myworkdayjobs.com/Visa_Early_Careers"
+
+  - type: workday
+    name: "Cisco"
+    url: "https://cisco.wd5.myworkdayjobs.com/wday/cxs/cisco/Cisco_Careers/jobs"
+    search_text: "intern"
+    board_url: "https://cisco.wd5.myworkdayjobs.com/Cisco_Careers"
+
+  - type: workday
+    name: "CME Group"
+    url: "https://cmegroup.wd1.myworkdayjobs.com/wday/cxs/cmegroup/cme_careers/jobs"
+    search_text: "intern"
+    board_url: "https://cmegroup.wd1.myworkdayjobs.com/cme_careers"
+
+  # --- Plain server-rendered career pages (HTML text diff) ---
+  - type: webpage
+    name: "Apple"
+    url: "https://jobs.apple.com/en-us/search?team=internships-STDNT-INTRN"
+    board_url: "https://jobs.apple.com/en-us/search?team=internships-STDNT-INTRN"
+
+  - type: webpage
+    name: "Capital One"
+    url: "https://www.capitalonecareers.com/all-internship-jobs"
+    board_url: "https://www.capitalonecareers.com/all-internship-jobs"
+
+  # --- Browser-based (Playwright/Chromium) — these sites don't expose a
+  # plain-HTTP path at all (a CSRF-bound API, a client-side-only search
+  # box, or active bot-blocking), so a real browser is launched just for
+  # these, once per poll cycle, and closed again right after. See each
+  # _fetch_*_jobs_lines docstring in alerter.py for the specific reason
+  # per site. Kept last in this file so the lightweight HTTP-based sources
+  # above always get checked even if this step is slow or fails outright.
+  - type: meta_jobs
+    name: "Meta"
+    url: "https://www.metacareers.com/jobs?q=intern"
+    board_url: "https://www.metacareers.com/jobs?q=intern"
+
+  - type: snowflake_jobs
+    name: "Snowflake"
+    url: "https://careers.snowflake.com/us/en/search-results?keywords=intern"
+    board_url: "https://careers.snowflake.com/us/en/search-results?keywords=intern"
+
+  - type: uber_jobs
+    name: "Uber"
+    url: "https://jobs.uber.com/en/jobs/"
+    search_text: "intern"
+    board_url: "https://jobs.uber.com/en/jobs/"
+
+  - type: tesla_jobs
+    name: "Tesla"
+    url: "https://www.tesla.com/careers/search/?query=intern"
+    board_url: "https://www.tesla.com/careers/search/?query=intern"
+    # Currently always blocked (HTTP 403, Akamai Bot Manager) even with a
+    # real browser — see _fetch_tesla_jobs_lines's docstring in alerter.py.
+    # Left enabled in case that ever changes; check bot.log for the
+    # "tesla_jobs: still blocked" warning to confirm current status.
+
+  # --- Not added: Microsoft's careers site remains JS-rendered with no
+  # API found yet — ask if you want it investigated the same way these
+  # 4 were.

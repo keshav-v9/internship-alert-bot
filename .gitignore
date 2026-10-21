@@ -1,0 +1,9 @@
+.env
+state.json
+bot.log
+*.log
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
