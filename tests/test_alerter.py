@@ -296,3 +296,48 @@ def test_wp_feed_request_identifies_the_bot(tmp_path):
 
     assert asyncio.run(run()) == []
     assert seen["ua"] == "internship-alert-bot/1.0"
+
+
+def test_catch_up_message_only_when_something_new_was_found():
+    assert Alerter._catch_up_message(3600, 0) is None
+    msg = Alerter._catch_up_message(95 * 60, 3)
+    assert "1h 35m" in msg and "3 new postings" in msg
+    assert "1 new posting " in Alerter._catch_up_message(600, 1)
+
+
+def test_run_sends_one_notice_after_machine_sleep(tmp_path, monkeypatch):
+    import alerter as m
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(m.time, "time", lambda: clock["t"])
+    orig_sleep = asyncio.sleep
+
+    async def fake_sleep(seconds):
+        clock["t"] += seconds
+        await orig_sleep(0)
+
+    monkeypatch.setattr(m.asyncio, "sleep", fake_sleep)
+
+    notices = []
+
+    async def notice(message):
+        notices.append(message)
+
+    a = make_alerter(tmp_path, [], poll_interval_seconds=300, on_notice=notice)
+    cycle = {"n": 0}
+
+    async def fake_poll():
+        cycle["n"] += 1
+        if cycle["n"] == 1:
+            clock["t"] += 5000  # the laptop "sleeps" for ~83 minutes during this cycle's sleep
+        if cycle["n"] == 2:
+            a._alerts_this_cycle += 2  # two postings found on the catch-up poll
+        if cycle["n"] == 4:
+            raise asyncio.CancelledError
+
+    a.poll_once = fake_poll
+    try:
+        asyncio.run(a.run())
+    except asyncio.CancelledError:
+        pass
+    assert len(notices) == 1 and "2 new postings" in notices[0]

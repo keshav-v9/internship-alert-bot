@@ -80,6 +80,8 @@ What changed:
 
 Run `pip install -r requirements-dev.txt && pytest` for the tests. Peak memory (about 200 MB) is unchanged.
 
+- Wake-up catch-up: if the machine sleeps (laptop lid closed), the bot polls within seconds of waking and, if anything new appeared while it was off, sends a "Welcome back" DM summarizing how long it was offline and how many postings it found.
+
 ## Files
 
 - `bot.py`: Discord (and email) delivery.

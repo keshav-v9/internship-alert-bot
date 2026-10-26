@@ -946,6 +946,7 @@ class Alerter:
         state_path: str = "state.json",
         github_token: str | None = None,
         max_concurrency: int = 8,
+        on_notice: Callable[[str], Awaitable[None]] | None = None,
     ):
         """
         Args:
@@ -993,6 +994,11 @@ class Alerter:
         # Max sources fetched at once in a poll cycle. A cycle takes roughly
         # as long as its slowest source instead of the sum of all of them.
         self.max_concurrency = max(1, max_concurrency)
+        # Optional callback for bot-level notices (e.g. "back online after a
+        # sleep"), separate from per-source alerts.
+        self.on_notice = on_notice
+        # New postings alerted in the current cycle, used for catch-up notices.
+        self._alerts_this_cycle = 0
         # url -> ETag from the last 200 response, for conditional GETs.
         # In-memory only: the first poll after a restart is always a full
         # fetch, later ones send If-None-Match and usually get a 304.
@@ -1723,6 +1729,7 @@ class Alerter:
                 new_lines = await self._drop_stale(session, new_lines, source["max_age_hours"])
             if new_lines:
                 logger.info("%r changed: %d new line(s)", name, len(new_lines))
+                self._alerts_this_cycle += len(new_lines)
                 await self.on_update(name, new_lines)
 
         if previous_lines != current_lines:
@@ -1889,20 +1896,50 @@ class Alerter:
         seconds_until_peak = (self._next_peak_start(now) - now).total_seconds()
         return max(1.0, min(self.off_peak_poll_interval_seconds, seconds_until_peak))
 
+    @staticmethod
+    def _catch_up_message(gap_seconds: float, found: int) -> str | None:
+        """Text for the "while you were away" notice, or None if there is
+        nothing worth saying (no new postings were found after the gap)."""
+        if found <= 0:
+            return None
+        minutes = int(gap_seconds // 60)
+        away = f"{minutes // 60}h {minutes % 60}m" if minutes >= 60 else f"{minutes}m"
+        plural = "s" if found != 1 else ""
+        return f"Back online after about {away} offline. {found} new posting{plural} appeared while I was away (listed above)."
+
     async def run(self) -> None:
         """The main loop: poll every source, wait for the next scheduled
         poll (see `_next_sleep_seconds`), repeat forever. This is what
         bot.py schedules as a background asyncio task once it's connected
         to Discord — see bot.py's on_ready handler.
         """
+        last_start_wall: float | None = None
         while True:
             started = time.monotonic()
+            started_wall = time.time()
+            # A wall-clock gap much longer than the poll interval means the
+            # machine slept (asyncio's monotonic timers don't advance in sleep).
+            gap = None if last_start_wall is None else started_wall - last_start_wall
+            self._alerts_this_cycle = 0
             await self.poll_once()
             elapsed = time.monotonic() - started
+            if gap is not None and gap > 2 * self.poll_interval_seconds + 60 and self.on_notice:
+                message = self._catch_up_message(gap, self._alerts_this_cycle)
+                if message:
+                    try:
+                        await self.on_notice(message)
+                    except Exception:
+                        logger.exception("failed to send catch-up notice")
+            last_start_wall = started_wall
             # Fixed-rate scheduling: the interval is measured start-to-start,
             # so a slow cycle doesn't stretch the period (sleeping the full
             # interval *after* each cycle made the real period interval +
             # cycle time, i.e. worst-case alert latency grew with it).
             sleep_for = max(0.0, self._next_sleep_seconds() - elapsed)
             logger.info("poll cycle took %.1fs; sleeping %.0fs", elapsed, sleep_for)
-            await asyncio.sleep(sleep_for)
+            # Sleep in short chunks against the wall clock, so after the
+            # machine wakes the next poll runs within seconds instead of after
+            # whatever was left of one long monotonic sleep.
+            deadline = time.time() + sleep_for
+            while (remaining := deadline - time.time()) > 0:
+                await asyncio.sleep(min(15.0, remaining))

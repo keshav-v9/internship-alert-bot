@@ -301,6 +301,9 @@ async def on_ready():
         await send_alert(user, source_name, new_lines)
         await send_email(source_name, new_lines)
 
+    async def on_notice(message: str) -> None:
+        await user.send(embed=discord.Embed(title="Welcome back", description=message, color=discord.Color.blue()))
+
     alerter = Alerter(
         sources=config["sources"],
         on_update=on_update,
@@ -311,6 +314,7 @@ async def on_ready():
         state_path=config.get("state_path", "state.json"),
         github_token=GITHUB_TOKEN,
         max_concurrency=config.get("max_concurrency", 8),
+        on_notice=on_notice,
     )
     _alerter_task = asyncio.create_task(alerter.run())
     _alerter_task.add_done_callback(_on_alerter_task_done)
