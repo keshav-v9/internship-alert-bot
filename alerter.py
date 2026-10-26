@@ -1025,13 +1025,15 @@ class Alerter:
         markdown per diffable unit, same as before that parser existed.
         """
         url = f"https://api.github.com/repos/{source['owner']}/{source['repo']}/readme"
-        headers = {"Accept": "application/vnd.github.v3+json"}
+        # The raw media type returns the file body directly and has no size cap;
+        # the default JSON form returns an empty `content` for READMEs over
+        # 1 MB (SimplifyJobs' list is ~1.1 MB), which looked like "no jobs".
+        headers = {"Accept": "application/vnd.github.raw+json"}
         if self.github_token:
             headers["Authorization"] = f"Bearer {self.github_token}"
         async with session.get(url, headers=headers) as resp:
             resp.raise_for_status()
-            data = await resp.json()
-        content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+            content = await resp.text(encoding="utf-8", errors="replace")
         table_rows = _extract_table_rows(content)
         if table_rows is not None:
             return table_rows

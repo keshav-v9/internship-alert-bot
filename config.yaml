@@ -19,7 +19,6 @@ sources:
     owner: SimplifyJobs
     repo: Summer2027-Internships
     board_url: "https://github.com/SimplifyJobs/Summer2027-Internships"
-    enabled: false
 
   - type: github_repo
     name: "Jobright SWE Internships"
