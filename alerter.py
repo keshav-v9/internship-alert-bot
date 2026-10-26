@@ -11,6 +11,7 @@ import re
 import math
 import ssl
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -668,6 +669,21 @@ def _extract_wp_job_manager(html_fragment: str) -> list[str]:
     return lines
 
 
+def _extract_wp_job_manager_feed(xml_text: str) -> list[str]:
+    """Turn a WP Job Manager RSS feed (`/?feed=job_feed`) into formatted lines,
+    keeping only US internship/co-op postings. The feed is the plugin's own
+    public listing format; each <item> carries <title>, <link>, and the
+    namespaced <company> and <location> elements."""
+    lines: list[str] = []
+    for item in ET.fromstring(xml_text).iter("item"):
+        fields = {child.tag.rsplit("}", 1)[-1]: (child.text or "").strip() for child in item}
+        title = fields.get("title", "")
+        if not _is_internship_title(title) or not _is_us_location(fields.get("location", "")):
+            continue
+        lines.append(_format_role(fields.get("company", ""), title, fields.get("link", "")))
+    return lines
+
+
 _APPLICATION_COLUMN_NAMES = {"application", "apply", "link"}
 _ROLE_COLUMN_NAMES = {"role", "title", "position"}
 _LOCATION_COLUMN_NAMES = {"location", "locations"}
@@ -1310,6 +1326,12 @@ class Alerter:
         source itself says stop" pattern as _fetch_amazon_jobs_lines, just
         driven by an explicit page count instead of an empty-page sentinel.
         """
+        if source.get("feed_url"):
+            # Some sites block the AJAX endpoint for datacenter IPs but serve the
+            # plugin's public RSS feed normally; use it when configured.
+            async with session.get(source["feed_url"]) as resp:
+                resp.raise_for_status()
+                return _extract_wp_job_manager_feed(await resp.text())
         url = source["url"]
         lines: list[str] = []
         page = 1

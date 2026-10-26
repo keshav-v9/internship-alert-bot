@@ -50,7 +50,7 @@ Each entry under `sources:` has a `type`, a `name` (shown in alerts), a `url`, a
 | `workday` | A Workday career site | `search_text`, `max_results` |
 | `github_repo` | A GitHub repo's README table | `owner`, `repo` |
 | `linkedin_jobs`, `google_jobs`, `bloomberg_jobs`, `meta_jobs`, `snowflake_jobs`, `uber_jobs`, `tesla_jobs`, `amazon_jobs` | Site-specific scrapers | `search_text` (Uber, Workday), `max_results` (Amazon) |
-| `wp_job_manager` | WordPress "WP Job Manager" boards | |
+| `wp_job_manager` | WordPress "WP Job Manager" boards (AJAX endpoint, or its RSS feed if `feed_url` is set, e.g. `https://site/?feed=job_feed&posts_per_page=100`, for sites that block datacenter IPs on the AJAX endpoint) | `feed_url` |
 | `apple_jobs` | jobs.apple.com search results (US internships only) | `max_results` |
 | `radancy_jobs` | Radancy/TalentBrew career sites such as capitalonecareers.com (US internships only) | |
 | `webpage` | Any server-rendered page; alerts when its text changes | `selector` (CSS, optional) |

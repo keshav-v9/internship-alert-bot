@@ -261,3 +261,19 @@ def test_radancy_extractor_keeps_only_us_internships():
     lines, seen = _extract_radancy_jobs(html, "Capital One", "https://x.com/search")
     assert seen == 3
     assert lines == ["**Capital One** — Data Intern — [Apply](https://x.com/job/a/1)"]
+
+
+def test_wp_job_manager_feed_keeps_us_internships_only():
+    from alerter import _extract_wp_job_manager_feed
+
+    xml = """<?xml version="1.0"?><rss xmlns:job_listing="https://example.com/ns"><channel>
+    <item><title>Water Engineering Intern (2027)</title><link>https://x.com/job/a/</link>
+      <job_listing:location>Champaign, IL</job_listing:location><job_listing:company>MSA</job_listing:company></item>
+    <item><title>Graphic Designer</title><link>https://x.com/job/b/</link>
+      <job_listing:location>Champaign, IL</job_listing:location><job_listing:company>Acme</job_listing:company></item>
+    <item><title>Data Intern</title><link>https://x.com/job/c/</link>
+      <job_listing:location>Toronto, Canada</job_listing:location><job_listing:company>Foo</job_listing:company></item>
+    </channel></rss>"""
+    assert _extract_wp_job_manager_feed(xml) == [
+        "**MSA** — Water Engineering Intern (2027) — [Apply](https://x.com/job/a/)"
+    ]
