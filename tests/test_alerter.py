@@ -277,3 +277,22 @@ def test_wp_job_manager_feed_keeps_us_internships_only():
     assert _extract_wp_job_manager_feed(xml) == [
         "**MSA** — Water Engineering Intern (2027) — [Apply](https://x.com/job/a/)"
     ]
+
+
+def test_wp_feed_request_identifies_the_bot(tmp_path):
+    seen = {}
+
+    async def handler(request):
+        seen["ua"] = request.headers.get("User-Agent")
+        return web.Response(text='<rss><channel></channel></rss>')
+
+    async def run():
+        runner, url = await serve(handler)
+        a = make_alerter(tmp_path, [])
+        async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla/5.0 Chrome"}) as s:
+            lines = await a._fetch_wp_job_manager_lines(s, {"url": "x", "feed_url": url})
+        await runner.cleanup()
+        return lines
+
+    assert asyncio.run(run()) == []
+    assert seen["ua"] == "internship-alert-bot/1.0"

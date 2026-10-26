@@ -1329,7 +1329,10 @@ class Alerter:
         if source.get("feed_url"):
             # Some sites block the AJAX endpoint for datacenter IPs but serve the
             # plugin's public RSS feed normally; use it when configured.
-            async with session.get(source["feed_url"]) as resp:
+            # RSS readers identify themselves; a datacenter IP sending a desktop
+            # browser User-Agent (the session default) is what some firewalls flag.
+            headers = {"User-Agent": "internship-alert-bot/1.0"}
+            async with session.get(source["feed_url"], headers=headers) as resp:
                 resp.raise_for_status()
                 return _extract_wp_job_manager_feed(await resp.text())
         url = source["url"]
